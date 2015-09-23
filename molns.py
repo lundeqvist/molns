@@ -466,7 +466,62 @@ class MOLNSController(MOLNSbase):
         else:
             print "No instance running for this controller"
 
+    @classmethod
+    def restart_controller(cls, args, config, password=None):
+        """ Stop the head node of a MOLNs controller. """
+        logging.debug("MOLNSController.stop_controller(args={0})".format(args))
+        controller_obj = cls._get_controllerobj(args, config)
+        if controller_obj is None: return
+        # Check if any instances are assigned to this controller
+        instance_list = config.get_all_instances(controller_id=controller_obj.id)
+        # Check if they are running
+        if len(instance_list) > 0:
+            for i in instance_list:
+                if i.worker_group_id is None:
+                    status = controller_obj.get_instance_status(i)
+                    if status == controller_obj.STATUS_RUNNING:
+                        print "Stopping controller running at {0}".format(i.ip_address)
+                        controller_obj.stop_instance(i)
+                else:
+                    worker_name = config.get_object_by_id(i.worker_group_id, 'WorkerGroup').name
+                    worker_obj = cls._get_workerobj([worker_name], config)
+                    status = worker_obj.get_instance_status(i)
+                    if status == worker_obj.STATUS_RUNNING or status == worker_obj.STATUS_STOPPED:
+                        print "Terminating worker '{1}' running at {0}".format(i.ip_address, worker_name)
+                        worker_obj.terminate_instance(i)
+    
+        else:
+            print "No instance running for this controller"
 
+        """ Start the MOLNs controller. """
+        logging.debug("MOLNSController.start_controller(args={0})".format(args))
+        controller_obj = cls._get_controllerobj(args, config)
+        if controller_obj is None: return
+        # Check if any instances are assigned to this controller
+        instance_list = config.get_all_instances(controller_id=controller_obj.id)
+        # Check if they are running or stopped (if so, resume them)
+        inst = None
+        if len(instance_list) > 0:
+            for i in instance_list:
+                status = controller_obj.get_instance_status(i)
+                if status == controller_obj.STATUS_RUNNING:
+                    print "controller already running at {0}".format(i.ip_address)
+                    return
+                elif status == controller_obj.STATUS_STOPPED:
+                    print "Resuming instance at {0}".format(i.ip_address)
+                    controller_obj.resume_instance(i)
+                    inst = i
+                    break
+        if inst is None:
+            # Start a new instance
+            print "Starting new controller"
+            inst = controller_obj.start_instance()
+        # deploying
+        sshdeploy = SSHDeploy(config=controller_obj.provider, config_dir=config.config_dir)
+        sshdeploy.deploy_ipython_controller(inst.ip_address, notebook_password=password)
+        sshdeploy.deploy_molns_webserver(inst.ip_address)
+        #sshdeploy.deploy_stochss(inst.ip_address, port=443)
+        
     @classmethod
     def terminate_controller(cls, args, config):
         """ Terminate the head node of a MOLNs controller. """
@@ -1405,6 +1460,8 @@ COMMAND_LIST = [
                 function=MOLNSController.list_controller),
             Command('show', {'name':None},
                 function=MOLNSController.show_controller),
+            Command('restart', {'name':None},
+                function=MOLNSController.restart_controller),
             Command('delete', {'name':None},
                 function=MOLNSController.delete_controller),
             Command('export',{'name':None},
